@@ -6,11 +6,13 @@ hatali_gonderimler.txt
 *.pdf
 mail_icerik.txt
 config.py
+*.xlsx
  
 # ── Python ───────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 .env
+.venv/
  
 # ── OS ───────────────────────────────────────────────────────────
 .DS_Store
