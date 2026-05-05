@@ -1,0 +1,18 @@
+# ── Excel çıktıları ──────────────────────────────────────────────
+sirket_verileri_*.xlsx
+hatali_gonderimler.txt
+ 
+# ── Kişisel dosyalar ─────────────────────────────────────────────
+*.pdf
+mail_icerik.txt
+config.py
+ 
+# ── Python ───────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+.env
+ 
+# ── OS ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+ 
