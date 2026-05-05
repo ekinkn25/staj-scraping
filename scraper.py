@@ -21,16 +21,72 @@ EMAIL_REGEX = re.compile(
 )
 
 ILETISIM_YOLLARI = [
-    "/iletisim", "/iletişim", "/contact", "/contact-us", "",
-    "/bize-ulasin", "/bize-ulaşın", "/hakkimizda", "/hakkımızda",
-    "/tr/iletisim", "/en/contact", "/contact.html", "/eng/contacts.html", "/#iletişim",
-    "/#contact-section", "/TR,16/iletisim.html", "/bize-ulasin/",
+    # Türkçe
+    "/iletisim", "/iletişim", "/bize-ulasin", "/bize-ulaşın",
+    "/iletisim.html", "/iletisim/", "/iletisim.php",
+    "/hakkimizda", "/hakkımızda", "/hakkinda", "/hakkında",
+    "/tr/iletisim", "/tr/bize-ulasin",
+    # İngilizce
+    "/contact", "/contact-us", "/contact.html", "/contact/",
+    "/contact.php", "/contactus", "/get-in-touch",
+    "/en/contact", "/eng/contact", "/eng/contacts.html",
+    "/about", "/about-us", "/about.html",
+    # Hash/anchor tabanlı (tek sayfa siteler)
+    "/#iletisim", "/#iletişim", "/#contact", "/#contact-section",
+    "/#bize-ulasin", "/#iletisim-formu",
+    # Karma yapılar (bazı CMS'lerin garip yolları)
+    "/TR,16/iletisim.html", "/pages/contact", "/sayfalar/iletisim",
+
 ]
 
+GIZLI_MAIL_REGEX = [
+    # info(at)domain.com  /  info[at]domain.com  /  info{at}domain.com
+    re.compile(
+        r'[a-zA-Z0-9._%+\-]+\s*[\(\[\{]at[\)\]\}]\s*[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}',
+        re.IGNORECASE
+    ),
+    # info AT domain DOT com  /  info at domain dot com
+    re.compile(
+        r'[a-zA-Z0-9._%+\-]+\s+[aA][tT]\s+[a-zA-Z0-9.\-]+\s+[dD][oO][tT]\s+[a-zA-Z]{2,}',
+        re.IGNORECASE
+    ),
+    # info at domain.com  (boşluklu ama nokta normal)
+    re.compile(
+        r'[a-zA-Z0-9._%+\-]+\s+[aA][tT]\s+[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}',
+        re.IGNORECASE
+    ),
+]
+
+def gizli_mail_temizle(metin: str) -> str:
+    """(at), [at], {at}, AT → @ dönüştürür; DOT → . dönüştürür."""
+    metin = re.sub(r'\s*[\(\[\{]at[\)\]\}]\s*', '@', metin, flags=re.IGNORECASE)
+    metin = re.sub(r'\s+at\s+', '@', metin, flags=re.IGNORECASE)
+    metin = re.sub(r'\s*[\(\[\{]dot[\)\]\}]\s*', '.', metin, flags=re.IGNORECASE)
+    metin = re.sub(r'\s+dot\s+', '.', metin, flags=re.IGNORECASE)
+    return metin
+
 GECERSIZ_MAILLER = {
-    "example.com", "domain.com", "email.com", "test.com",
-    "yoursite.com", "sentry.io", "wix.com", "wordpress.com",
-    "wixpress.com", "sentry-next.wixpress.com",
+    "example.com", "domain.com", "email.com", "test.com", "yoursite.com",
+    # Hata takip sistemleri
+    "sentry.io", "sentry-next.wixpress.com", "bugsnag.com", "rollbar.com",
+    # Site oluşturma platformları
+    "wix.com", "wixpress.com", "wordpress.com", "squarespace.com",
+    "webflow.io", "ghost.io", "weebly.com", "jimdo.com", "strikingly.com",
+    # Mail/pazarlama platformları
+    "mailchimp.com", "sendgrid.com", "sendgrid.net", "mailgun.org",
+    "hubspot.com", "klaviyo.com", "constantcontact.com",
+    # Sosyal medya (profil URL'lerinden sızan adresler)
+    "facebook.com", "twitter.com", "instagram.com", "linkedin.com",
+    "youtube.com", "tiktok.com",
+    # Altyapı/CDN
+    "amazonaws.com", "cloudflare.com", "googletagmanager.com",
+    "google-analytics.com", "googleapis.com",
+    # Yorum/destek sistemleri
+    "disqus.com", "zendesk.com", "intercom.io", "crisp.chat",
+    # Schema/W3C meta verileri
+    "schema.org", "w3.org", "ogp.me",
+    # Diğer
+    "gravatar.com", "shopify.com", "medium.com",
 }
 
 GECERSIZ_LINKLER = ["http://", "https://", "", "Link Yok", "http://-", "http:// ", "http://yok", "#"]
@@ -48,50 +104,113 @@ def sayfa_getir(url: str, timeout: int = 10) -> str | None:
     return None
 
 def mail_bul(html: str) -> set:
-    bulunanlar = set(EMAIL_REGEX.findall(html))
-    return {
-        m.lower() for m in bulunanlar
-        if m.split("@")[1].lower() not in GECERSIZ_MAILLER
-        and not m.endswith((".png", ".jpg", ".gif", ".svg"))
-    }
+    """Sayfadan normal ve gizlenmiş (at) formatlı mailleri toplar."""
+    temizler = set()
+ 
+    # 1. Normal @ formatı
+    for m in EMAIL_REGEX.findall(html):
+        domain = m.split("@")[1].lower()
+        if domain not in GECERSIZ_MAILLER and not m.endswith((".png", ".jpg", ".gif", ".svg")):
+            temizler.add(m.lower())
+ 
+    # 2. Gizlenmiş (at)/(AT) formatı — önce metni normalleştir, sonra tekrar ara
+    temiz_html = gizli_mail_temizle(html)
+    for m in EMAIL_REGEX.findall(temiz_html):
+        domain = m.split("@")[1].lower()
+        if domain not in GECERSIZ_MAILLER and not m.endswith((".png", ".jpg", ".gif", ".svg")):
+            temizler.add(m.lower())
+ 
+    return temizler
+
+def iletisim_linkleri_bul(soup, base_url: str) -> list:
+    """
+    Sayfanın kendi linklerini tarayarak iletişim sayfalarını otomatik bulur.
+    Sabit listeye takılmayan garip URL yapılarını da yakalar.
+    """
+    anahtar_kelimeler = [
+        "iletisim", "iletişim", "contact", "bize-ulas", "bize ulaş",
+        "ulaşın", "ulasin", "reach", "get in touch", "hakkimizda",
+        "hakkında", "about",
+    ]
+    bulunan_linkler = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        metin = a.get_text(strip=True).lower()
+        href_lower = href.lower()
+ 
+        eslesme = any(k in href_lower or k in metin for k in anahtar_kelimeler)
+        if not eslesme:
+            continue
+ 
+        # Tam URL yap
+        if href.startswith("http"):
+            tam_url = href
+        elif href.startswith("/"):
+            tam_url = base_url + href
+        else:
+            continue
+ 
+        if tam_url not in bulunan_linkler:
+            bulunan_linkler.append(tam_url)
+ 
+    return bulunan_linkler[:5]  # En fazla 5 adet dene
 
 
 def sirket_maillerini_topla(sirket_url: str) -> list:
     if not sirket_url or sirket_url == "Link Bulunamadı":
         return []
-
     if not sirket_url.startswith(("http://", "https://")):
         sirket_url = "https://" + sirket_url
-
+ 
     tum_mailler = set()
-
-    # 1. Ana sayfa
-    ana_html = sayfa_getir(sirket_url)
-    if ana_html:
-        tum_mailler |= mail_bul(ana_html)
-        soup = BeautifulSoup(ana_html, "html.parser")
+    base = f"{urlparse(sirket_url).scheme}://{urlparse(sirket_url).netloc}"
+ 
+    def sayfadan_topla(html: str) -> set:
+        """HTML'den hem regex hem mailto: linklerinden mail toplar."""
+        mailler = mail_bul(html)
+        soup = BeautifulSoup(html, "html.parser")
         for a in soup.find_all("a", href=True):
             if a["href"].startswith("mailto:"):
                 mail = a["href"].replace("mailto:", "").split("?")[0].strip().lower()
-                if mail:
-                    tum_mailler.add(mail)
-
-    # 2. İletişim sayfaları
-    base = f"{urlparse(sirket_url).scheme}://{urlparse(sirket_url).netloc}"
+                if mail and "@" in mail:
+                    mailler.add(mail)
+        return mailler, soup
+ 
+    # 1. Ana sayfa
+    ana_html = sayfa_getir(sirket_url)
+    ana_soup = None
+    if ana_html:
+        bulunanlar, ana_soup = sayfadan_topla(ana_html)
+        tum_mailler |= bulunanlar
+ 
+    if tum_mailler:
+        return sorted(tum_mailler)
+ 
+    # 2. Sitenin kendi navigasyonundan iletişim linki bul (otomatik keşif)
+    if ana_soup:
+        otomatik_linkler = iletisim_linkleri_bul(ana_soup, base)
+        for link in otomatik_linkler:
+            html = sayfa_getir(link, timeout=8)
+            if html:
+                bulunanlar, _ = sayfadan_topla(html)
+                tum_mailler |= bulunanlar
+            if tum_mailler:
+                break
+ 
+    if tum_mailler:
+        return sorted(tum_mailler)
+ 
+    # 3. Sabit yol listesini dene (otomatik keşif bulamazsa)
     for yol in ILETISIM_YOLLARI:
         html = sayfa_getir(base + yol, timeout=8)
         if html:
-            tum_mailler |= mail_bul(html)
-            soup2 = BeautifulSoup(html, "html.parser")
-            for a in soup2.find_all("a", href=True):
-                if a["href"].startswith("mailto:"):
-                    mail = a["href"].replace("mailto:", "").split("?")[0].strip().lower()
-                    if mail:
-                        tum_mailler.add(mail)
-            if tum_mailler:
-                break
-
+            bulunanlar, _ = sayfadan_topla(html)
+            tum_mailler |= bulunanlar
+        if tum_mailler:
+            break
+ 
     return sorted(tum_mailler)
+ 
 
 # ── Siteye göre şirket listesi çekme kuralları ───────────────────────────────
  
@@ -211,104 +330,3 @@ def calistir():
  
 if __name__ == "__main__":
     calistir()
- 
-
-# # ── Siteye göre şirket listesi çekme kuralları ───────────────────────────────
-
-# kaynak_linkler = [
-#     "https://odtuteknokent.com.tr/tr/firmalar/tum-firmalar.php"
-# ]
-
-# toplanan_veriler = []
-# print(f"Toplam {len(kaynak_linkler)} kaynak link taranıyor...\n")
-
-# for index, url in enumerate(kaynak_linkler, start=1):
-#     print(f"[{index}/{len(kaynak_linkler)}] Taranıyor: {url}")
-#     try:
-#         cevap = requests.get(url, headers=HEADERS, timeout=15, verify=False)
-#         if cevap.status_code == 200:
-#             corba = BeautifulSoup(cevap.text, "html.parser")
-
-#             if "odtuteknokent" in url:
-#                 satirlar = corba.find_all("tr")
-#                 for satir in satirlar:
-#                     sutunlar = satir.find_all("td")
-#                     if len(sutunlar) >= 2:
-#                         sirket_ismi = sutunlar[0].text.replace('"', "").replace("#", "").strip()
-#                         a_etiketi = sutunlar[1].find("a")
-#                         sirket_linki = (
-#                             a_etiketi.get("href", "Link Yok").strip()
-#                             if a_etiketi else "Link Yok"
-#                         )
-#                         gecersiz = ["http://", "https://", "", "Link Yok", "http://-", "http:// ", "http://yok", "#"]
-#                         if sirket_linki in gecersiz:
-#                             sirket_linki = "Link Bulunamadı"
-#                         if sirket_ismi:
-#                             toplanan_veriler.append({
-#                                 "Şirket İsmi": sirket_ismi,
-#                                 "Şirket URL": sirket_linki,
-#                                 "Çekildiği Kaynak": url,
-#                             })
-#             else:
-#                 print(f"Uyarı: {url} için kural yok, atlanıyor.")
-#         else:
-#             print(f"HATA: Statü kodu {cevap.status_code}")
-#     except Exception as e:
-#         print(f"Hata: {url} -> {e}")
-#     time.sleep(1)
-
-# print(f"\nAşama 1 tamamlandı: {len(toplanan_veriler)} şirket bulundu.\n")
-
-# # ─────────────────────────────────────────────────────────────────────────────
-# # AŞAMA 2: Mail arama — KeyboardInterrupt gelirse mevcut veriyi kaydet
-# # ─────────────────────────────────────────────────────────────────────────────
-
-# toplam = len(toplanan_veriler)
-# i = 0
-# try:
-#     for i, kayit in enumerate(toplanan_veriler, start=1):
-#         sirket_adi = kayit["Şirket İsmi"]
-#         sirket_url = kayit["Şirket URL"]
-
-#         print(f"[{i}/{toplam}] Mail aranıyor: {sirket_adi} → {sirket_url}")
-#         mailler = sirket_maillerini_topla(sirket_url)
-
-#         if mailler:
-#             kayit["Mail Adresleri"] = " | ".join(mailler)
-#             print(f"  ✓ Bulunan: {kayit['Mail Adresleri']}")
-#         else:
-#             kayit["Mail Adresleri"] = "Bulunamadı"
-#             print(f"  – Mail bulunamadı")
-
-#         time.sleep(1.5)
-
-# # --- DÜZELTME: Ctrl+C ile kesilirse o ana kadar toplanan veriyi kaydet ---
-# except KeyboardInterrupt:
-#     print(f"\n\n⚠ Kullanıcı tarafından durduruldu. {i}/{toplam} şirket işlendi.")
-#     print("Mevcut veriler kaydediliyor...\n")
-
-# # ─────────────────────────────────────────────────────────────────────────────
-# # AŞAMA 3: Excel'e kaydet
-# # ─────────────────────────────────────────────────────────────────────────────
-
-# islenenler = [k for k in toplanan_veriler if "Mail Adresleri" in k]
-
-# if islenenler:
-#     df = pd.DataFrame(islenenler, columns=[
-#         "Şirket İsmi", "Şirket URL", "Mail Adresleri", "Çekildiği Kaynak"
-#     ])
-
-#     temel_isim = "odtu_teknokent_firmalar"
-#     uzanti = ".xlsx"
-#     sayac = 1
-#     dosya_adi = f"{temel_isim}_{sayac}{uzanti}"
-#     while os.path.exists(dosya_adi):
-#         sayac += 1
-#         dosya_adi = f"{temel_isim}_{sayac}{uzanti}"
-
-#     df.to_excel(dosya_adi, index=False)
-#     mail_bulunan = (df["Mail Adresleri"] != "Bulunamadı").sum()
-#     print(f"✅ {len(df)} şirket kaydedildi → '{dosya_adi}'")
-#     print(f"   Mail bulunan: {mail_bulunan} / {len(df)}")
-# else:
-#     print("\nUyarı: Hiç veri işlenemedi.")
